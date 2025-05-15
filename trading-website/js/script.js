@@ -1,159 +1,249 @@
-// Trading Platform JavaScript with Scene-based Parallax
-
+// Enhanced Instrument Table Implementation - Fixed and Optimized
 class TradingPlatform {
     constructor() {
         this.apiUrl = 'http://18.143.79.95/api/priceData/technical-test';
         this.instrumentsData = [];
         this.filteredData = [];
-        this.previousData = [];
+        this.previousData = new Map(); // Use Map for efficient lookups
         this.currentPage = 1;
         this.itemsPerPage = 10;
         this.searchTerm = '';
         this.refreshInterval = null;
+        this.isFirstLoad = true;
         
         this.init();
     }
     
     init() {
         this.setupEventListeners();
-        this.setupChristmasScene();
         this.loadInitialData();
         this.startDataRefresh();
+        this.setupParallaxEffect();
+        this.setupScrollAnimations();
     }
-    
-    setupChristmasScene() {
-        // Scene-based parallax similar to CodePen
-        const scene = document.getElementById('christmas-scene');
+
+    setupParallaxEffect() {
+        const scene = document.getElementById('scene');
         if (scene && window.innerWidth > 768) {
-            // Simple parallax effect on mouse move
+            let ticking = false;
+            
             document.addEventListener('mousemove', (e) => {
-                const mouseX = e.clientX / window.innerWidth;
-                const mouseY = e.clientY / window.innerHeight;
-                
-                // Background parallax
-                const background = scene.querySelector('.background');
-                if (background) {
-                    const bgMove = (mouseX - 0.5) * 20;
-                    background.style.transform = `translateX(${bgMove}px)`;
-                }
-                
-                // Mountain parallax
-                const mountains = scene.querySelector('.mountains');
-                if (mountains) {
-                    const mountainMove = (mouseX - 0.5) * 40;
-                    mountains.style.transform = `translateX(${mountainMove}px)`;
+                if (!ticking) {
+                    requestAnimationFrame(() => {
+                        const mouseX = (e.clientX / window.innerWidth) - 0.5;
+                        const mouseY = (e.clientY / window.innerHeight) - 0.5;
+                        
+                        const background = scene.querySelector('.background');
+                        if (background) {
+                            const bgX = mouseX * 30;
+                            const bgY = mouseY * 15;
+                            background.style.transform = `translate(${bgX}px, ${bgY}px)`;
+                        }
+                        
+                        const mountainLayer = scene.querySelector('.mountain-layer');
+                        if (mountainLayer) {
+                            const mountainX = mouseX * 50;
+                            const mountainY = mouseY * 25;
+                            mountainLayer.style.transform = `translate(${mountainX}px, ${mountainY}px)`;
+                        }
+                        
+                        ticking = false;
+                    });
+                    ticking = true;
                 }
             });
             
-            // Scene layers movement on scroll
+            let scrollTicking = false;
             window.addEventListener('scroll', () => {
-                const scrolled = window.pageYOffset;
-                const layers = scene.querySelectorAll('.scene-layer');
-                
-                layers.forEach((layer, index) => {
-                    const depth = layer.dataset.depth || 0.2;
-                    const yPos = -(scrolled * depth);
-                    layer.style.transform += ` translateY(${yPos}px)`;
-                });
-            });
-        }
-    }
-    
-    setupEventListeners() {
-        // Search functionality
-        const searchInput = document.getElementById('searchInput');
-        if (searchInput) {
-            searchInput.addEventListener('input', (e) => {
-                this.searchTerm = e.target.value.toLowerCase();
-                this.filterData();
-                this.currentPage = 1;
-                this.renderTable();
-                this.renderPagination();
-            });
-        }
-        
-        // Smooth scrolling for navigation links
-        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
-            anchor.addEventListener('click', function (e) {
-                e.preventDefault();
-                const target = document.querySelector(this.getAttribute('href'));
-                if (target) {
-                    target.scrollIntoView({
-                        behavior: 'smooth',
-                        block: 'start'
+                if (!scrollTicking) {
+                    requestAnimationFrame(() => {
+                        const scrolled = window.pageYOffset;
+                        const rate = scrolled * -0.5;
+                        if (scene) {
+                            scene.style.transform = `translateY(${rate}px)`;
+                        }
+                        scrollTicking = false;
                     });
+                    scrollTicking = true;
                 }
             });
-        });
-        
-        // Mobile menu toggle
-        this.setupMobileMenu();
-        
-        // Intersection Observer for animations
-        this.setupScrollAnimations();
+        }
     }
     
     setupScrollAnimations() {
         const observerOptions = {
             threshold: 0.1,
-            rootMargin: '0px 0px -50px 0px'
+            rootMargin: '0px 0px -100px 0px'
         };
         
         const observer = new IntersectionObserver((entries) => {
             entries.forEach(entry => {
                 if (entry.isIntersecting) {
-                    entry.target.classList.add('animate-in');
+                    entry.target.classList.add('visible');
                 }
             });
         }, observerOptions);
         
-        // Observe elements for scroll animations
-        document.querySelectorAll('.instrument-card, .step-card, .feature-card').forEach(el => {
+        document.querySelectorAll('.instrument-card, .step-card, .stat-item, .section-title, .section-subtitle').forEach(el => {
+            el.classList.add('fade-in-up');
             observer.observe(el);
         });
     }
     
-    setupMobileMenu() {
-        const navbarToggler = document.querySelector('.navbar-toggler');
-        const navbarNav = document.querySelector('#navbarNav');
-        
-        if (navbarToggler && navbarNav) {
-            navbarToggler.addEventListener('click', () => {
-                navbarNav.classList.toggle('show');
+    setupEventListeners() {
+        const searchInput = document.getElementById('searchInput');
+        if (searchInput) {
+            // Debounce search input for better performance
+            let searchTimeout;
+            searchInput.addEventListener('input', (e) => {
+                clearTimeout(searchTimeout);
+                searchTimeout = setTimeout(() => {
+                    this.searchTerm = e.target.value.toLowerCase().trim();
+                    this.filterData();
+                    this.currentPage = 1;
+                    this.renderTable();
+                    this.renderPagination();
+                }, 300);
             });
         }
+        
+        // Handle cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            this.stopRefresh();
+        });
     }
     
     async loadInitialData() {
         try {
-            this.showLoading(true);
-            const response = await fetch(this.apiUrl);
+            // Only show loading spinner on first load
+            if (this.isFirstLoad) {
+                this.showLoading(true);
+            }
+            
+            const data = await this.fetchData();
+            this.processData(data);
+            
+            if (this.isFirstLoad) {
+                this.showLoading(false);
+                this.isFirstLoad = false;
+            }
+            
+            this.renderTable();
+            this.renderPagination();
+        } catch (error) {
+            this.handleError(error);
+        }
+    }
+    
+    async fetchData() {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+        
+        try {
+            const response = await fetch(this.apiUrl, {
+                method: 'GET',
+                mode: 'cors',
+                cache: 'no-cache',
+                signal: controller.signal
+            });
+            
+            clearTimeout(timeoutId);
             
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
             
-            const data = await response.json();
-            this.processData(data);
-            this.showLoading(false);
-            this.renderTable();
-            this.renderPagination();
+            return await response.json();
         } catch (error) {
-            console.error('Error loading data:', error);
-            this.showError('Failed to load market data. Please check your connection.');
+            clearTimeout(timeoutId);
+            if (error.name === 'AbortError') {
+                throw new Error('Request timeout - API took too long to respond');
+            }
+            throw error;
         }
     }
     
     processData(data) {
-        // Store previous data for comparison
-        this.previousData = [...this.instrumentsData];
+        // Store current data as previous for the next comparison
+        const newPreviousData = new Map();
+        this.instrumentsData.forEach(item => {
+            newPreviousData.set(item.symbol, {
+                bid: item.bid,
+                ask: item.ask,
+                dailyChange: item.dailyChange
+            });
+        });
         
-        // Process new data
-        this.instrumentsData = Array.isArray(data) ? data : [];
+        // Validate and normalize new data
+        const validatedData = this.validateData(data);
         
-        // Filter and sort data
+        // Calculate price changes by comparing with previous data
+        this.instrumentsData = validatedData.map(item => {
+            const previousItem = newPreviousData.get(item.symbol);
+            
+            if (previousItem) {
+                // Apply the color logic as specified in requirements
+                item.bidChange = this.getPriceChange(item.bid, previousItem.bid);
+                item.askChange = this.getPriceChange(item.ask, previousItem.ask);
+                item.dailyChangeChange = this.getPriceChange(item.dailyChange, previousItem.dailyChange);
+            } else {
+                // No previous data available - neutral color
+                item.bidChange = 'neutral';
+                item.askChange = 'neutral';
+                item.dailyChangeChange = 'neutral';
+            }
+            
+            return item;
+        });
+        
+        // Update previous data for next comparison
+        this.previousData = newPreviousData;
+        
+        // Filter and sort data for display
         this.filterData();
-        this.sortData();
+    }
+    
+    validateData(data) {
+        if (!Array.isArray(data)) {
+            console.error('Invalid data format: expected array, got:', typeof data);
+            return [];
+        }
+        
+        return data
+            .filter(item => {
+                // Check required fields
+                const hasSymbol = item && (item.Symbol || item.symbol);
+                const hasBid = item && (item.Bid !== undefined || item.bid !== undefined);
+                const hasAsk = item && (item.Ask !== undefined || item.ask !== undefined);
+                return hasSymbol && hasBid && hasAsk;
+            })
+            .map(item => ({
+                symbol: item.Symbol || item.symbol,
+                bid: this.parseFloat(item.Bid || item.bid),
+                ask: this.parseFloat(item.Ask || item.ask),
+                dailyChange: this.parseFloat(item.Daily || item.DailyChange || item.dailyChange || item.Change || 0)
+            }))
+            .filter(item => 
+                // Remove items with invalid numeric data
+                !isNaN(item.bid) && !isNaN(item.ask) && item.symbol
+            );
+    }
+    
+    parseFloat(value) {
+        const parsed = parseFloat(value);
+        return isNaN(parsed) ? 0 : parsed;
+    }
+    
+    /**
+     * Price comparison logic as per requirements:
+     * - Green: current < latest (price went down)
+     * - Red: current > latest (price went up)  
+     * - Neutral: current = latest (price unchanged)
+     */
+    getPriceChange(current, latest) {
+        if (current < latest) return 'green';
+        if (current > latest) return 'red';
+        return 'neutral';
     }
     
     filterData() {
@@ -164,25 +254,30 @@ class TradingPlatform {
                 item.symbol && item.symbol.toLowerCase().includes(this.searchTerm)
             );
         }
-    }
-    
-    sortData() {
-        // Sort by symbol name alphabetically
+        
+        // Sort by symbol for consistent display (prevents random jumping)
         this.filteredData.sort((a, b) => {
-            const symbolA = a.symbol || '';
-            const symbolB = b.symbol || '';
-            return symbolA.localeCompare(symbolB);
+            if (!a.symbol || !b.symbol) return 0;
+            return a.symbol.localeCompare(b.symbol);
         });
     }
     
     startDataRefresh() {
-        // Refresh data every 1 second
-        this.refreshInterval = setInterval(() => {
-            this.loadInitialData();
+        // Clear any existing interval
+        this.stopRefresh();
+        
+        // Refresh every 1 second as required
+        this.refreshInterval = setInterval(async () => {
+            try {
+                await this.loadInitialData();
+            } catch (error) {
+                console.error('Refresh error:', error);
+                // Continue refreshing even on error, don't break the cycle
+            }
         }, 1000);
     }
     
-    stopDataRefresh() {
+    stopRefresh() {
         if (this.refreshInterval) {
             clearInterval(this.refreshInterval);
             this.refreshInterval = null;
@@ -194,73 +289,38 @@ class TradingPlatform {
         const tableContainer = document.getElementById('tableContainer');
         
         if (loading && tableContainer) {
-            loading.style.display = show ? 'block' : 'none';
+            loading.style.display = show ? 'flex' : 'none';
             tableContainer.style.display = show ? 'none' : 'block';
         }
     }
     
-    showError(message) {
-        const loading = document.getElementById('loadingSpinner');
-        if (loading) {
-            loading.innerHTML = `
-                <div class="alert alert-danger" role="alert">
-                    <i class="fas fa-exclamation-triangle"></i>
-                    ${message}
-                    <button class="btn btn-outline-danger btn-sm ms-2" onclick="location.reload()">
-                        Retry
-                    </button>
-                </div>
-            `;
-            loading.style.display = 'block';
-        }
-    }
-    
-    getPriceComparison(currentSymbol, currentPrice, priceType) {
-        const previous = this.previousData.find(item => item.symbol === currentSymbol);
+    handleError(error) {
+        console.error('API Error:', error);
         
-        if (!previous || !previous[priceType] || !currentPrice) {
-            return 'neutral';
+        // Show error only on first load or if no data exists
+        if (this.isFirstLoad || this.instrumentsData.length === 0) {
+            const loading = document.getElementById('loadingSpinner');
+            if (loading) {
+                loading.innerHTML = `
+                    <div class="alert alert-danger text-center">
+                        <h5>Error Loading Data</h5>
+                        <p>${error.message}</p>
+                        <p class="small">
+                            ${error.message.includes('CORS') ? 
+                                'Please install and enable the CORS extension mentioned in the instructions.' : 
+                                'Verify that the API is accessible and the CORS extension is enabled.'
+                            }
+                        </p>
+                        <button class="btn btn-danger" onclick="window.tradingPlatform.loadInitialData()">
+                            Retry
+                        </button>
+                    </div>
+                `;
+            }
+        } else {
+            // If we have existing data, just continue with it and hide loading
+            this.showLoading(false);
         }
-        
-        const currentValue = parseFloat(currentPrice);
-        const previousValue = parseFloat(previous[priceType]);
-        
-        if (currentValue > previousValue) {
-            return 'increase';
-        } else if (currentValue < previousValue) {
-            return 'decrease';
-        }
-        return 'neutral';
-    }
-    
-    formatPrice(price) {
-        if (!price || isNaN(price)) return '-';
-        return parseFloat(price).toFixed(2);
-    }
-    
-    formatChange(change) {
-        if (!change || isNaN(change)) return '-';
-        const value = parseFloat(change);
-        return value >= 0 ? `+${value.toFixed(3)}` : value.toFixed(3);
-    }
-    
-    getPriceClass(comparison) {
-        switch (comparison) {
-            case 'increase':
-                return 'price-red';
-            case 'decrease':
-                return 'price-green';
-            default:
-                return 'price-neutral';
-        }
-    }
-    
-    getChangeClass(change) {
-        if (!change || isNaN(change)) return '';
-        const value = parseFloat(change);
-        if (value > 0) return 'change-positive price-green';
-        if (value < 0) return 'change-negative price-red';
-        return 'price-neutral';
     }
     
     renderTable() {
@@ -274,54 +334,71 @@ class TradingPlatform {
         if (pageData.length === 0) {
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="4" class="text-center py-4">
-                        <i class="fas fa-search fa-2x text-muted mb-2"></i>
-                        <p class="text-muted">No instruments found matching your search.</p>
+                    <td colspan="4" class="text-center py-4 text-muted">
+                        ${this.searchTerm ? 
+                            `No results found for "${this.escapeHtml(this.searchTerm)}"` : 
+                            'No data available'
+                        }
                     </td>
                 </tr>
             `;
             return;
         }
         
-        tbody.innerHTML = pageData.map(item => {
-            const bidComparison = this.getPriceComparison(item.symbol, item.bid, 'bid');
-            const askComparison = this.getPriceComparison(item.symbol, item.ask, 'ask');
-            const changeComparison = this.getPriceComparison(item.symbol, item.dailyChange, 'dailyChange');
-            
-            return `
-                <tr>
-                    <td>
-                        <span class="symbol-name">${item.symbol || 'N/A'}</span>
-                    </td>
-                    <td>
-                        <span class="${this.getPriceClass(bidComparison)}">
-                            ${this.formatPrice(item.bid)}
-                        </span>
-                    </td>
-                    <td>
-                        <span class="${this.getPriceClass(askComparison)}">
-                            ${this.formatPrice(item.ask)}
-                        </span>
-                    </td>
-                    <td>
-                        <span class="${this.getChangeClass(item.dailyChange)}">
-                            ${this.formatChange(item.dailyChange)}
-                        </span>
-                    </td>
-                </tr>
-            `;
-        }).join('');
+        // Preserve scroll position to prevent jumping
+        const tableWrapper = tbody.closest('.table-responsive');
+        const scrollTop = tableWrapper ? tableWrapper.scrollTop : 0;
         
-        // Add animation to new rows
-        tbody.querySelectorAll('tr').forEach((row, index) => {
-            row.style.opacity = '0';
-            row.style.transform = 'translateY(20px)';
-            setTimeout(() => {
-                row.style.transition = 'all 0.3s ease';
-                row.style.opacity = '1';
-                row.style.transform = 'translateY(0)';
-            }, index * 50);
-        });
+        tbody.innerHTML = pageData.map(item => `
+            <tr>
+                <td>
+                    <span class="symbol-name">${this.escapeHtml(item.symbol)}</span>
+                </td>
+                <td class="${this.getPriceClass(item.bidChange)}">
+                    ${this.formatPrice(item.bid)}
+                </td>
+                <td class="${this.getPriceClass(item.askChange)}">
+                    ${this.formatPrice(item.ask)}
+                </td>
+                <td class="${this.getPriceClass(item.dailyChangeChange)}">
+                    ${this.formatChange(item.dailyChange)}
+                </td>
+            </tr>
+        `).join('');
+        
+        // Restore scroll position to prevent jumping
+        if (tableWrapper) {
+            tableWrapper.scrollTop = scrollTop;
+        }
+    }
+    
+    getPriceClass(change) {
+        switch (change) {
+            case 'green': return 'price-green';
+            case 'red': return 'price-red';
+            case 'neutral': return 'price-neutral';
+            default: return 'price-neutral';
+        }
+    }
+    
+    formatPrice(price) {
+        if (isNaN(price)) return '0.00';
+        return price.toFixed(2);
+    }
+    
+    formatChange(change) {
+        if (isNaN(change)) return '0.000';
+        const sign = change >= 0 ? '+' : '';
+        return `${sign}${change.toFixed(3)}`;
+    }
+    
+    escapeHtml(unsafe) {
+        return unsafe
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
     }
     
     renderPagination() {
@@ -335,257 +412,114 @@ class TradingPlatform {
             return;
         }
         
-        let paginationHTML = '';
+        // Smart pagination: show ellipsis for large page counts
+        const delta = 2; // Number of pages to show around current page
+        const range = [];
+        const rangeWithDots = [];
+        
+        for (let i = Math.max(2, this.currentPage - delta);
+             i <= Math.min(totalPages - 1, this.currentPage + delta);
+             i++) {
+            range.push(i);
+        }
+        
+        if (this.currentPage - delta > 2) {
+            rangeWithDots.push(1, '...');
+        } else {
+            rangeWithDots.push(1);
+        }
+        
+        rangeWithDots.push(...range);
+        
+        if (this.currentPage + delta < totalPages - 1) {
+            rangeWithDots.push('...', totalPages);
+        } else if (totalPages > 1) {
+            rangeWithDots.push(totalPages);
+        }
+        
+        let html = '';
         
         // Previous button
-        paginationHTML += `
+        html += `
             <li class="page-item ${this.currentPage === 1 ? 'disabled' : ''}">
-                <a class="page-link" href="#" data-page="${this.currentPage - 1}">
-                    <i class="fas fa-chevron-left"></i>
+                <a class="page-link" href="#" data-page="${this.currentPage - 1}" 
+                   ${this.currentPage === 1 ? 'tabindex="-1"' : ''}>
+                    Previous
                 </a>
             </li>
         `;
         
-        // Page numbers
-        for (let i = 1; i <= totalPages; i++) {
-            if (i === 1 || i === totalPages || (i >= this.currentPage - 2 && i <= this.currentPage + 2)) {
-                paginationHTML += `
-                    <li class="page-item ${i === this.currentPage ? 'active' : ''}">
-                        <a class="page-link" href="#" data-page="${i}">${i}</a>
-                    </li>
-                `;
-            } else if (i === this.currentPage - 3 || i === this.currentPage + 3) {
-                paginationHTML += `
-                    <li class="page-item disabled">
-                        <span class="page-link">...</span>
+        // Page numbers with ellipsis
+        rangeWithDots.forEach(page => {
+            if (page === '...') {
+                html += '<li class="page-item disabled"><span class="page-link">...</span></li>';
+            } else {
+                html += `
+                    <li class="page-item ${page === this.currentPage ? 'active' : ''}">
+                        <a class="page-link" href="#" data-page="${page}">${page}</a>
                     </li>
                 `;
             }
-        }
+        });
         
         // Next button
-        paginationHTML += `
+        html += `
             <li class="page-item ${this.currentPage === totalPages ? 'disabled' : ''}">
-                <a class="page-link" href="#" data-page="${this.currentPage + 1}">
-                    <i class="fas fa-chevron-right"></i>
+                <a class="page-link" href="#" data-page="${this.currentPage + 1}"
+                   ${this.currentPage === totalPages ? 'tabindex="-1"' : ''}>
+                    Next
                 </a>
             </li>
         `;
         
-        pagination.innerHTML = paginationHTML;
+        pagination.innerHTML = html;
         
         // Add click events to pagination links
         pagination.querySelectorAll('a.page-link').forEach(link => {
             link.addEventListener('click', (e) => {
                 e.preventDefault();
-                const page = parseInt(e.target.closest('a').dataset.page);
+                const page = parseInt(link.dataset.page);
+                
                 if (page && page !== this.currentPage && page >= 1 && page <= totalPages) {
                     this.currentPage = page;
                     this.renderTable();
                     this.renderPagination();
-                    this.scrollToTable();
+                    
+                    // Smooth scroll to table top
+                    const tableSection = document.getElementById('instruments');
+                    if (tableSection) {
+                        tableSection.scrollIntoView({ behavior: 'smooth' });
+                    }
                 }
             });
         });
     }
     
-    scrollToTable() {
-        const tableSection = document.getElementById('instruments');
-        if (tableSection) {
-            tableSection.scrollIntoView({
-                behavior: 'smooth',
-                block: 'start'
-            });
-        }
+    // Public methods for manual control if needed
+    refresh() {
+        return this.loadInitialData();
+    }
+    
+    destroy() {
+        this.stopRefresh();
+        // Remove event listeners if needed
     }
 }
 
-// Initialize the application when DOM is loaded
+// Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
-    // Initialize trading platform
-    const platform = new TradingPlatform();
-    
-    // Add some additional interactive features
-    initializeAdditionalFeatures();
-    
-    // Handle page visibility change to pause/resume data refresh
-    document.addEventListener('visibilitychange', () => {
-        if (document.hidden) {
-            platform.stopDataRefresh();
-        } else {
-            platform.startDataRefresh();
-        }
-    });
+    window.tradingPlatform = new TradingPlatform();
 });
 
-function initializeAdditionalFeatures() {
-    // Add scroll effects
-    addScrollEffects();
-    
-    // Add form validation
-    addFormValidation();
-    
-    // Add performance optimizations
-    addPerformanceOptimizations();
-}
+// Global utility functions
+window.refreshInstrumentTable = () => {
+    if (window.tradingPlatform) {
+        window.tradingPlatform.refresh();
+    }
+};
 
-function addScrollEffects() {
-    // Add scroll-triggered animations
-    const observerOptions = {
-        threshold: 0.1,
-        rootMargin: '0px 0px -50px 0px'
-    };
-    
-    const observer = new IntersectionObserver((entries) => {
-        entries.forEach(entry => {
-            if (entry.isIntersecting) {
-                entry.target.classList.add('fade-in');
-            }
-        });
-    }, observerOptions);
-    
-    // Observe elements for scroll animations
-    document.querySelectorAll('.instrument-card, .step-card, .feature-card').forEach(el => {
-        observer.observe(el);
-    });
-}
-
-function addFormValidation() {
-    // Add basic form validation for sign-up buttons
-    document.querySelectorAll('.btn-signup').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            // Add ripple effect
-            createRipple(e);
-        });
-    });
-}
-
-function createRipple(event) {
-    const button = event.currentTarget;
-    const ripple = document.createElement('span');
-    const rect = button.getBoundingClientRect();
-    const size = Math.max(rect.width, rect.height);
-    const x = event.clientX - rect.left - size / 2;
-    const y = event.clientY - rect.top - size / 2;
-    
-    ripple.style.width = ripple.style.height = size + 'px';
-    ripple.style.left = x + 'px';
-    ripple.style.top = y + 'px';
-    ripple.classList.add('ripple');
-    
-    button.appendChild(ripple);
-    
-    setTimeout(() => {
-        ripple.remove();
-    }, 600);
-}
-
-function addPerformanceOptimizations() {
-    // Lazy load images
-    const imageObserver = new IntersectionObserver((entries) => {
-        entries.forEach(entry => {
-            if (entry.isIntersecting) {
-                const img = entry.target;
-                if (img.dataset.src) {
-                    img.src = img.dataset.src;
-                    img.removeAttribute('data-src');
-                    imageObserver.unobserve(img);
-                }
-            }
-        });
-    });
-    
-    document.querySelectorAll('img[data-src]').forEach(img => {
-        imageObserver.observe(img);
-    });
-    
-    // Reduce animations on low-power devices
-    if (navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4) {
-        document.body.classList.add('reduce-motion');
+window.stopInstrumentTable = () => {
+    if (window.tradingPlatform) {
+        window.tradingPlatform.destroy();
     }
-}
-
-// Utility functions
-function debounce(func, wait) {
-    let timeout;
-    return function executedFunction(...args) {
-        const later = () => {
-            clearTimeout(timeout);
-            func(...args);
-        };
-        clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
-    };
-}
-
-function throttle(func, limit) {
-    let inThrottle;
-    return function(...args) {
-        if (!inThrottle) {
-            func.apply(this, args);
-            inThrottle = true;
-            setTimeout(() => inThrottle = false, limit);
-        }
-    };
-}
-
-// Add CSS classes for animations and effects
-const style = document.createElement('style');
-style.textContent = `
-    .fade-in {
-        animation: fadeInUp 0.6s ease-out forwards;
-    }
-    
-    .animate-in {
-        animation: slideInUp 0.8s ease-out forwards;
-    }
-    
-    @keyframes fadeInUp {
-        from {
-            opacity: 0;
-            transform: translateY(30px);
-        }
-        to {
-            opacity: 1;
-            transform: translateY(0);
-        }
-    }
-    
-    @keyframes slideInUp {
-        from {
-            opacity: 0;
-            transform: translateY(50px) scale(0.95);
-        }
-        to {
-            opacity: 1;
-            transform: translateY(0) scale(1);
-        }
-    }
-    
-    .ripple {
-        position: absolute;
-        border-radius: 50%;
-        background: rgba(255, 255, 255, 0.3);
-        transform: scale(0);
-        animation: rippleAnimation 0.6s linear;
-    }
-    
-    @keyframes rippleAnimation {
-        to {
-            transform: scale(4);
-            opacity: 0;
-        }
-    }
-    
-    .btn-signup {
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .reduce-motion * {
-        animation-duration: 0.01ms !important;
-        animation-iteration-count: 1 !important;
-        transition-duration: 0.01ms !important;
-    }
-`;
-document.head.appendChild(style);
+};
